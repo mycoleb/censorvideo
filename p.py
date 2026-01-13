@@ -11,8 +11,9 @@ import os
 from pathlib import Path
 
 
-def check_ffmpeg():
-    """Check if FFmpeg is installed and accessible"""
+def find_ffmpeg():
+    """Find FFmpeg executable, checking common locations"""
+    # Try ffmpeg in PATH first
     try:
         result = subprocess.run(
             ['ffmpeg', '-version'],
@@ -21,9 +22,39 @@ def check_ffmpeg():
             text=True,
             timeout=5
         )
-        print("✓ FFmpeg found")
-        return True
-    except FileNotFoundError:
+        return 'ffmpeg'
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    
+    # On Windows, check WinGet installation location
+    if sys.platform == 'win32':
+        import glob
+        winget_pattern = os.path.join(
+            os.environ.get('LOCALAPPDATA', ''),
+            'Microsoft', 'WinGet', 'Packages',
+            'Gyan.FFmpeg*', 'ffmpeg-*', 'bin', 'ffmpeg.exe'
+        )
+        matches = glob.glob(winget_pattern)
+        if matches:
+            return matches[0]
+        
+        # Check Program Files
+        program_files_locations = [
+            r'C:\Program Files\ffmpeg\bin\ffmpeg.exe',
+            r'C:\ffmpeg\bin\ffmpeg.exe',
+        ]
+        for location in program_files_locations:
+            if os.path.exists(location):
+                return location
+    
+    return None
+
+
+def check_ffmpeg():
+    """Check if FFmpeg is installed and accessible"""
+    ffmpeg_path = find_ffmpeg()
+    
+    if ffmpeg_path is None:
         print("\n✗ ERROR: FFmpeg not found!")
         print("\nFFmpeg is required but not installed or not in your PATH.")
         print("\nInstallation instructions:")
@@ -33,13 +64,24 @@ def check_ffmpeg():
         print("    3. Or use chocolatey: choco install ffmpeg")
         print("  Ubuntu/Debian: sudo apt-get install ffmpeg")
         print("  macOS: brew install ffmpeg")
-        return False
+        return None
+    
+    try:
+        result = subprocess.run(
+            [ffmpeg_path, '-version'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=5
+        )
+        print(f"✓ FFmpeg found: {ffmpeg_path}")
+        return ffmpeg_path
     except subprocess.TimeoutExpired:
         print("\n✗ ERROR: FFmpeg check timed out")
-        return False
+        return None
     except Exception as e:
         print(f"\n✗ ERROR checking FFmpeg: {e}")
-        return False
+        return None
 
 
 def validate_input_file(input_file):
@@ -109,7 +151,8 @@ def process_video(input_file, output_file, text, font_size=48, font_color='white
     print("="*60)
     
     # Validate inputs
-    if not check_ffmpeg():
+    ffmpeg_path = check_ffmpeg()
+    if not ffmpeg_path:
         return False
     
     if not validate_input_file(input_file):
@@ -126,7 +169,7 @@ def process_video(input_file, output_file, text, font_size=48, font_color='white
     # Video filter: blacken video and add text
     # Audio: copy original audio stream unchanged
     command = [
-        'ffmpeg',
+        ffmpeg_path,
         '-i', input_file,
         '-vf', (
             f"color=c=black:s=iw:ih[black];"
@@ -160,21 +203,30 @@ def process_video(input_file, output_file, text, font_size=48, font_color='white
             universal_newlines=True
         )
         
-        # Show progress
-        last_line = ""
+        # Collect all output
+        all_output = []
+        last_progress = ""
+        
         for line in process.stdout:
+            all_output.append(line)
             # FFmpeg outputs progress to stderr, which we've redirected to stdout
             if "time=" in line or "frame=" in line:
                 # Update progress on same line
                 print(f"\r{line.strip()[:80]}", end='', flush=True)
-                last_line = line
+                last_progress = line
         
         process.wait()
         
         if process.returncode != 0:
             print(f"\n\n✗ FFmpeg failed with return code {process.returncode}")
-            print("\nLast output:")
-            print(last_line)
+            print("\n" + "="*60)
+            print("FFMPEG ERROR OUTPUT:")
+            print("="*60)
+            # Show last 30 lines or all output if less
+            error_lines = all_output[-30:] if len(all_output) > 30 else all_output
+            for line in error_lines:
+                print(line.rstrip())
+            print("="*60)
             return False
         
         # Verify output file was created
