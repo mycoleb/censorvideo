@@ -165,16 +165,15 @@ def process_video(input_file, output_file, text, font_size=48, font_color='white
     # Replace special characters that might cause issues
     escaped_text = text.replace("'", "'\\\\\\''").replace(":", "\\:")
     
-    # Build FFmpeg command
-    # Video filter: blacken video and add text
-    # Audio: copy original audio stream unchanged
+    # Build FFmpeg command with corrected filter syntax
+    # We need to get video dimensions first, then create black overlay
     command = [
         ffmpeg_path,
         '-i', input_file,
         '-vf', (
-            f"color=c=black:s=iw:ih[black];"
-            f"[black][0:v]overlay[blacked];"
-            f"[blacked]drawtext="
+            # Create black video matching input dimensions and overlay it
+            f"drawbox=color=black@1.0:t=fill,"
+            f"drawtext="
             f"text='{escaped_text}':"
             f"fontsize={font_size}:"
             f"fontcolor={font_color}:"
